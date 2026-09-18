@@ -766,6 +766,7 @@
     else if(state.screen === 'profile') html += renderProfile();
     else if(state.screen === 'deck') html += renderDeck();
     else if(state.screen === 'end') html += renderEnd();
+    else if(state.screen === 'matches') html += renderMyMatches();
     else if(state.screen === 'admin') html += renderAdmin();
 
     app.innerHTML = html;
@@ -885,6 +886,7 @@
         <div class="round-btn pass" id="passBtn">✕</div>
         <div class="round-btn like" id="likeBtn">❤</div>
       </div>
+      <span class="backlink" id="viewMatchesLink">Ver mis matches${myMatches().length ? ' 🔥 ('+myMatches().length+')' : ''}</span>
       <span class="backlink" id="editProfileLink">Editar mi perfil</span>
     </div>`;
   }
@@ -969,8 +971,21 @@
       <div class="sub">Le diste like a ${liked.length} de ${others().length} invitados.</div>
       ${liked.length ? `<ul class="likes-list">${liked.map(p=>`<li>❤️ ${esc(p.name)}</li>`).join('')}</ul>` : '<div class="empty-note">No le diste like a nadie... ¿todo bien? 👀</div>'}
       <div class="note-box">${FIREBASE_CONFIGURED ? '✅ Tus likes ya se guardaron solos. Los matches se revelan en la fiesta 👀' : '⚠️ Sync no configurado: tus likes quedaron solo en este celular.'}</div>
+      <span class="backlink" id="viewMatchesLink">Ver mis matches${myMatches().length ? ' 🔥 ('+myMatches().length+')' : ''}</span>
       <span class="backlink" id="editProfileLink">Editar mi perfil</span>
       <span class="backlink" id="backToLogin">Cambiar de invitado</span>
+    </div>`;
+  }
+
+  // ---------- MIS MATCHES ----------
+  function renderMyMatches(){
+    const matches = myMatches().map(id=>personById(id)).filter(Boolean);
+    const list = matches.map(p=>`<li>❤️ ${esc(p.name)} ${p.ig ? `<a class="ig-link" href="https://instagram.com/${encodeURIComponent(p.ig)}" target="_blank" rel="noopener" style="margin-left:6px;">📷 @${esc(p.ig)}</a>` : ''}</li>`).join('');
+    return `<div class="screen">
+      <div class="lead">Tus <span class="accent">matches</span> 🔥</div>
+      <div class="sub">${matches.length ? 'Le gustaste a estas personas tanto como ellas a vos.' : 'Todavía no tenés matches. ¡Seguí swipeando!'}</div>
+      ${matches.length ? `<ul class="likes-list">${list}</ul>` : '<div class="empty-note">Cuando haya un like mutuo, va a aparecer acá.</div>'}
+      <span class="backlink" id="backFromMatches">‹ Volver</span>
     </div>`;
   }
 
@@ -1055,7 +1070,7 @@
         const person = personById(otherId);
         const otherName = person ? person.name : otherId;
         const mutual = !!(other && (other.likes||[]).includes(id));
-        lines.push({from: s.name || id, to: otherName, mutual});
+        lines.push({from: s.name || id, to: otherName, toIg: person ? person.ig : '', mutual});
       });
     });
     return lines;
@@ -1121,6 +1136,12 @@
 
     const editProfileLink = q('#editProfileLink');
     if(editProfileLink) editProfileLink.addEventListener('click', ()=>{ state.draftProfile = null; state.screen='profile'; render(); });
+
+    const viewMatchesLink = q('#viewMatchesLink');
+    if(viewMatchesLink) viewMatchesLink.addEventListener('click', ()=>{ state.screen='matches'; render(); });
+
+    const backFromMatches = q('#backFromMatches');
+    if(backFromMatches) backFromMatches.addEventListener('click', ()=>{ state.screen = pendingDeck().length ? 'deck' : 'end'; render(); });
 
     // Profile screen
     const addPhotoBtn = q('#addPhotoBtn');
@@ -1234,7 +1255,10 @@
         const lines = computeDashboardLines();
         const area = q('#matchesArea');
         area.innerHTML = lines.length
-          ? lines.map(l=>`<div class="likeline ${l.mutual?'match':''}">${l.mutual?'🔥 ':''}${esc(l.from)} le dio like a ${esc(l.to)}</div>`).join('')
+          ? lines.map(l=>{
+              const igLink = (l.mutual && l.toIg) ? ` <a class="ig-link" href="https://instagram.com/${encodeURIComponent(l.toIg)}" target="_blank" rel="noopener">📷 @${esc(l.toIg)}</a>` : '';
+              return `<div class="likeline ${l.mutual?'match':''}">${l.mutual?'🔥 ':''}${esc(l.from)} le dio like a ${esc(l.to)}${igLink}</div>`;
+            }).join('')
           : '<div class="empty-note">Todavía no hay likes.</div>';
       });
     }
