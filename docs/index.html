@@ -787,12 +787,13 @@
 
   // ---------- LOGIN ----------
   function renderLogin(){
-    const all = [...PEOPLE_BASE, ...Object.values(extraGuestsCache)];
-    const items = all.map(p=>`<div class="name-btn ${state.me===p.id?'mine':''}" data-select="${p.id}">${esc(p.name)}</div>`).join('');
     return `<div class="screen">
       <div class="lead">¿Qué <span class="accent">rambler</span><br>sos?</div>
-      <div class="sub">Elegí tu nombre de la lista de invitados para armar tu perfil y ver a los demás solteros.</div>
-      <div class="grid-names">${items}</div>
+      <div class="sub">Escribí tu nombre para encontrarte en la lista de invitados.</div>
+      <div class="card-block">
+        <input type="text" id="nameSearch" placeholder="Empezá a escribir tu nombre..." autocomplete="off" autocapitalize="words" autocorrect="off">
+      </div>
+      <div class="grid-names" id="nameResults"></div>
     </div>`;
   }
 
@@ -1094,14 +1095,29 @@
     const enterSplashBtn = q('#enterSplashBtn');
     if(enterSplashBtn) enterSplashBtn.addEventListener('click', ()=>{ state.screen='login'; render(); });
 
-    qa('[data-select]').forEach(el=>{
-      el.addEventListener('click', ()=>{
+    const nameSearch = q('#nameSearch');
+    const nameResults = q('#nameResults');
+    if(nameSearch && nameResults){
+      const renderResults = (query)=>{
+        const query2 = query.trim().toLowerCase();
+        if(!query2){ nameResults.innerHTML = ''; return; }
+        const all = [...PEOPLE_BASE, ...Object.values(extraGuestsCache)];
+        const matches = all.filter(p=>p.name.toLowerCase().includes(query2)).slice(0, 8);
+        nameResults.innerHTML = matches.length
+          ? matches.map(p=>`<div class="name-btn" data-select="${p.id}">${esc(p.name)}</div>`).join('')
+          : '<div class="empty-note">No encontramos ese nombre.</div>';
+      };
+      nameSearch.addEventListener('input', e=>renderResults(e.target.value));
+      nameResults.addEventListener('click', e=>{
+        const el = e.target.closest('[data-select]');
+        if(!el) return;
         state.pendingId = el.getAttribute('data-select');
         state.pinError = false;
         state.screen = 'pin';
         render();
       });
-    });
+      nameSearch.focus();
+    }
 
     const pinInput = q('#pinInput');
     const pinSubmitBtn = q('#pinSubmitBtn');
