@@ -98,7 +98,8 @@
     display:flex;flex-direction:column;touch-action:none;user-select:none;
   }
   .photo-area{flex:1;position:relative;background:linear-gradient(160deg,#1c1c1c,#0a0a0a);display:flex;align-items:center;justify-content:center;overflow:hidden;}
-  .photo-area img{width:100%;height:100%;object-fit:cover;object-position:center 15%;}
+  .photo-bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(28px) brightness(.5);transform:scale(1.2);}
+  .photo-area img{position:relative;z-index:1;width:100%;height:100%;object-fit:contain;}
   .avatar-fallback{
     font-family:'Anton';font-size:80px;color:rgba(225,6,0,.5);
   }
@@ -672,6 +673,7 @@
 
   // Ids que nunca aparecen como candidatos para swipear/matchear
   const EXCLUDED_FROM_MATCHES = ['facundo'];
+  const MAX_PHOTOS = 5;
 
   function people(){ return getMergedPeople(); }
   function personById(id){ return people().find(p=>p.id===id); }
@@ -841,10 +843,10 @@
       <div class="card-block">
         <label class="field-label">Sobre vos</label>
         <textarea id="bioInput" rows="4" placeholder="Edad, qué hacés, algo random y copado sobre vos...">${esc(draft.bio||'')}</textarea>
-        <label class="field-label" style="margin-top:14px;">Fotos (hasta 3)</label>
+        <label class="field-label" style="margin-top:14px;">Fotos (hasta ${MAX_PHOTOS})</label>
         <div class="photo-row" id="photoRow">
           ${photosHtml}
-          ${(draft.photos||[]).length < 3 ? '<div class="photo-add" id="addPhotoBtn">+</div>' : ''}
+          ${(draft.photos||[]).length < MAX_PHOTOS ? '<div class="photo-add" id="addPhotoBtn">+</div>' : ''}
         </div>
         <input type="file" id="photoInput" accept="image/*">
         <div class="hint">${FIREBASE_CONFIGURED ? 'Al guardar, todos los invitados lo ven al instante.' : 'Sync no configurado: esto queda solo en este celular.'}</div>
@@ -873,7 +875,7 @@
       const translate = depth*10;
       const photos = p.photos && p.photos.length ? p.photos : null;
       const curIdx = Math.min(state.photoIdx[p.id]||0, photos ? photos.length-1 : 0);
-      const photo = photos ? `<img id="${isTop?'cardPhotoImg':''}" src="${photos[curIdx]}">` : `<div class="avatar-fallback">${esc(initials(p.name))}</div>`;
+      const photo = photos ? `<div id="${isTop?'cardPhotoBg':''}" class="photo-bg" style="background-image:url('${photos[curIdx]}')"></div><img id="${isTop?'cardPhotoImg':''}" src="${photos[curIdx]}">` : `<div class="avatar-fallback">${esc(initials(p.name))}</div>`;
       const dots = (isTop && photos && photos.length>1) ? `<div class="dots-row">${photos.map((_,i)=>`<div class="dot ${i===curIdx?'active':''}"></div>`).join('')}</div>` : '';
       const tapZones = (isTop && photos && photos.length>1) ? `<div class="tap-zone left" id="tapPrevPhoto"></div><div class="tap-zone right" id="tapNextPhoto"></div>` : '';
       const bullets = (p.bullets && p.bullets.length) ? p.bullets : (p.bio ? p.bio.split(/[·\-\n]/).map(s=>s.trim()).filter(Boolean) : []);
@@ -1118,10 +1120,10 @@
         ` : `<div class="hint">Nombre / género / Instagram de este invitado vienen de la lista original y no se editan desde acá.</div>`}
         <label class="field-label" style="margin-top:14px;">Sobre esta persona</label>
         <textarea id="adminEditBio" rows="4">${esc(draft.bio||'')}</textarea>
-        <label class="field-label" style="margin-top:14px;">Fotos (hasta 3)</label>
+        <label class="field-label" style="margin-top:14px;">Fotos (hasta ${MAX_PHOTOS})</label>
         <div class="photo-row" id="adminPhotoRow">
           ${photosHtml}
-          ${(draft.photos||[]).length < 3 ? '<div class="photo-add" id="adminAddPhotoBtn">+</div>' : ''}
+          ${(draft.photos||[]).length < MAX_PHOTOS ? '<div class="photo-add" id="adminAddPhotoBtn">+</div>' : ''}
         </div>
         <input type="file" id="adminPhotoInput" accept="image/*">
       </div>
@@ -1247,7 +1249,7 @@
             const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
             if(!state.draftProfile) state.draftProfile = {bio:'', photos:[]};
             state.draftProfile.photos = state.draftProfile.photos || [];
-            if(state.draftProfile.photos.length < 3) state.draftProfile.photos.push(dataUrl);
+            if(state.draftProfile.photos.length < MAX_PHOTOS) state.draftProfile.photos.push(dataUrl);
             render();
           };
           img.src = ev.target.result;
@@ -1303,6 +1305,8 @@
         state.photoIdx[p.id] = next;
         const img = q('#cardPhotoImg');
         if(img) img.src = photos[next];
+        const bg = q('#cardPhotoBg');
+        if(bg) bg.style.backgroundImage = `url('${photos[next]}')`;
         qa('.dots-row .dot').forEach((d,i)=>d.classList.toggle('active', i===next));
       };
       if(tapPrev) tapPrev.addEventListener('click', ()=>changePhoto(-1));
@@ -1432,7 +1436,7 @@
             const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
             if(!state.adminEditDraft) state.adminEditDraft = {bio:'', photos:[]};
             state.adminEditDraft.photos = state.adminEditDraft.photos || [];
-            if(state.adminEditDraft.photos.length < 3) state.adminEditDraft.photos.push(dataUrl);
+            if(state.adminEditDraft.photos.length < MAX_PHOTOS) state.adminEditDraft.photos.push(dataUrl);
             render();
           };
           img.src = ev.target.result;
