@@ -793,7 +793,7 @@
       <div class="splash-badge">★ MISMA CASA, MISMAS LOCURAS ★</div>
       <h1 class="splash-title">CUMPLE<span class="accent">RAMBLERO</span></h1>
       <div class="splash-emojis">🔥🍺❤️</div>
-      <div class="splash-sub">La app oficial de solteros de la fiesta. Mirá quién anda suelto, dale like y a la noche se revelan los matches.</div>
+      <div class="splash-sub">La app oficial de solteros de la fiesta. Mirá quién anda suelto, dale like y si hay match te enterás al toque.</div>
       <button class="btn btn-red" id="enterSplashBtn">ENTRAR</button>
       <div class="locked-badge">${FIREBASE_CONFIGURED ? 'SYNC EN VIVO · PROJECT X' : 'MODO LOCAL SIN SYNC · PROJECT X'}</div>
     </div>`;
@@ -985,7 +985,7 @@
       <div class="lead">Terminaste el <span class="accent">mazo</span> 🔥</div>
       <div class="sub">Le diste like a ${liked.length} de ${others().length} invitados.</div>
       ${liked.length ? `<ul class="likes-list">${liked.map(p=>`<li>❤️ ${esc(p.name)}</li>`).join('')}</ul>` : '<div class="empty-note">No le diste like a nadie... ¿todo bien? 👀</div>'}
-      <div class="note-box">${FIREBASE_CONFIGURED ? '✅ Tus likes ya se guardaron solos. Los matches se revelan en la fiesta 👀' : '⚠️ Sync no configurado: tus likes quedaron solo en este celular.'}</div>
+      <div class="note-box">${FIREBASE_CONFIGURED ? '✅ Tus likes ya se guardaron solos. Si hay match mutuo te enterás al instante 🔥' : '⚠️ Sync no configurado: tus likes quedaron solo en este celular.'}</div>
       <span class="backlink" id="viewMatchesLink">Ver mis matches${myMatches().length ? ' 🔥 ('+myMatches().length+')' : ''}</span>
       <span class="backlink" id="editProfileLink">Editar mi perfil</span>
       <span class="backlink" id="backToLogin">Cambiar de invitado</span>
