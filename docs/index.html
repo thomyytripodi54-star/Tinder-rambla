@@ -570,7 +570,10 @@
   let profilesCache = {};    // id -> {name, bio, photos}
   let swipesCache = {};      // id -> {name, likes:[], passes:[]}
   let extraGuestsCache = {}; // id -> {name, gender, ig, bullets, pinHash} (invitados agregados desde el panel admin)
+  let removedCache = {};     // id -> true (perfiles eliminados por el admin, ocultos de toda la app)
   let syncStatus = FIREBASE_CONFIGURED ? 'connecting' : 'off'; // connecting|live|off
+
+  function isRemoved(id){ return !!removedCache[id]; }
 
   function initLiveSync(){
     if(!db) return;
@@ -597,6 +600,14 @@
       syncStatus = 'live';
       render();
     }, err=>{ console.error('guests sync error', err); syncStatus = 'off'; render(); });
+
+    db.collection('removed').onSnapshot(snap=>{
+      const next = {};
+      snap.forEach(doc=>{ next[doc.id] = true; });
+      removedCache = next;
+      syncStatus = 'live';
+      render();
+    }, err=>{ console.error('removed sync error', err); syncStatus = 'off'; render(); });
   }
 
   function allGuestIds(){ return [...PEOPLE_BASE.map(p=>p.id), ...Object.keys(extraGuestsCache)]; }
@@ -622,7 +633,7 @@
   }
 
   function getMergedPeople(){
-    const base = [...PEOPLE_BASE, ...Object.values(extraGuestsCache)];
+    const base = [...PEOPLE_BASE, ...Object.values(extraGuestsCache)].filter(p=>!isRemoved(p.id));
     return base.map(p=>{
       const live = profilesCache[p.id];
       if(live){
@@ -1016,13 +1027,16 @@
       ? (syncStatus==='live' ? '🟢 Sync en vivo' : '🟡 Conectando…')
       : '🔴 Sync no configurado (ver instrucciones en el código, arriba del todo del script)';
 
-    const allGuests = [...PEOPLE_BASE, ...Object.values(extraGuestsCache)];
+    const allGuests = [...PEOPLE_BASE, ...Object.values(extraGuestsCache)].filter(p=>!isRemoved(p.id));
     const rosterList = allGuests.map(p=>{
       const live = profilesCache[p.id];
       const photos = (live && live.photos && live.photos.length) ? live.photos : (p.photos || []);
       const genderTag = p.gender === 'mujer' ? '♀' : (p.gender === 'hombre' ? '♂' : '?');
       const photoTag = photos.length ? `📷 ${photos.length}` : '⚠️ sin foto';
-      return `<div class="admin-item"><strong>${esc(p.name)}</strong> ${genderTag}<br><span style="color:var(--gray);font-size:12px;">${photoTag}</span></div>`;
+      return `<div class="admin-item" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div><strong>${esc(p.name)}</strong> ${genderTag}<br><span style="color:var(--gray);font-size:12px;">${photoTag}</span></div>
+        <span class="backlink" data-remove-guest="${p.id}" style="margin:0;color:#ff8a85;white-space:nowrap;">🗑 Eliminar</span>
+      </div>`;
     }).join('');
 
     const guestResultHtml = state.newGuestResult
@@ -1102,7 +1116,7 @@
         const query2 = query.trim().toLowerCase();
         if(!query2){ nameResults.innerHTML = ''; return; }
         const all = [...PEOPLE_BASE, ...Object.values(extraGuestsCache)];
-        const matches = all.filter(p=>p.name.toLowerCase().includes(query2)).slice(0, 8);
+        const matches = all.filter(p=>!isRemoved(p.id) && p.name.toLowerCase().includes(query2)).slice(0, 8);
         nameResults.innerHTML = matches.length
           ? matches.map(p=>`<div class="name-btn" data-select="${p.id}">${esc(p.name)}</div>`).join('')
           : '<div class="empty-note">No encontramos ese nombre.</div>';
@@ -1306,11 +1320,27 @@
           render();
         }catch(e){
           console.error('No se pudo agregar el invitado', e);
-          alert('Algo falló al agregar. Mirá la consola.');
+          alert('Algo falló al agregar: ' + (e && e.message ? e.message : e) + '\n\n(Si dice "permission-denied", falta agregar la regla de Firestore para la colección "guests".)');
         }
         addGuestBtn.disabled = false;
       });
     }
+
+    qa('[data-remove-guest]').forEach(el=>{
+      el.addEventListener('click', async ()=>{
+        const id = el.getAttribute('data-remove-guest');
+        const person = personById(id);
+        const ok = confirm(`¿Eliminar a ${person ? person.name : id} de la lista? Ya no va a aparecer para nadie. No se puede deshacer.`);
+        if(!ok || !db) return;
+        try{
+          await ensureAuth();
+          await db.collection('removed').doc(id).set({removedAt: firebase.firestore.FieldValue.serverTimestamp()});
+        }catch(e){
+          console.error('No se pudo eliminar', e);
+          alert('Algo falló al eliminar: ' + (e && e.message ? e.message : e));
+        }
+      });
+    });
   }
 
   // Initial screen
