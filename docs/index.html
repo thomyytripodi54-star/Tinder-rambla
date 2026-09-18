@@ -1040,10 +1040,7 @@
       <div id="matchesArea"></div>
 
       ${FIREBASE_CONFIGURED ? `<div class="row-btns" style="margin-top:22px;">
-        <button class="btn danger-btn" id="resetLikesBtn">Reiniciar likes (mantiene perfiles)</button>
-      </div>
-      <div class="row-btns" style="margin-top:10px;">
-        <button class="btn danger-btn" id="resetAllBtn">Borrar todos los perfiles y likes de la fiesta</button>
+        <button class="btn danger-btn" id="resetLikesBtn">Reiniciar likes de la fiesta</button>
       </div>` : ''}
       <span class="backlink" id="backToLogin">‹ Volver</span>
     </div>`;
@@ -1062,16 +1059,6 @@
       });
     });
     return lines;
-  }
-
-  function resetAllPartyData(){
-    if(!db) return;
-    const ok = confirm('¿Borrar TODOS los perfiles y likes de todos los invitados? No se puede deshacer.');
-    if(!ok) return;
-    Promise.all([
-      db.collection('profiles').get().then(snap=>Promise.all(snap.docs.map(d=>d.ref.delete()))),
-      db.collection('swipes').get().then(snap=>Promise.all(snap.docs.map(d=>d.ref.delete())))
-    ]).then(()=>{ alert('Listo, se borró todo.'); }).catch(e=>{ console.error(e); alert('Algo falló al borrar. Mirá la consola.'); });
   }
 
   function resetLikesOnly(){
@@ -1251,9 +1238,6 @@
           : '<div class="empty-note">Todavía no hay likes.</div>';
       });
     }
-    const resetAllBtn = q('#resetAllBtn');
-    if(resetAllBtn) resetAllBtn.addEventListener('click', resetAllPartyData);
-
     const resetLikesBtn = q('#resetLikesBtn');
     if(resetLikesBtn) resetLikesBtn.addEventListener('click', resetLikesOnly);
 
