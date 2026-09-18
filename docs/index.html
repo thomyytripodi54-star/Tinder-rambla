@@ -167,6 +167,67 @@
   .likeline{padding:10px 14px;border-radius:10px;margin-bottom:6px;font-size:14px;font-weight:600;background:#161616;border:1px solid #2a2a2a;}
   .likeline.match{background:linear-gradient(135deg,rgba(61,220,107,.18),rgba(61,220,107,.08));border-color:#3ddc6b;color:#8ff0ae;}
   .danger-btn{background:#2a0f0f;color:#ff8a85;border:1px solid #5a1f1f;}
+
+  /* MATCH OVERLAY */
+  .match-overlay{
+    position:fixed;inset:0;z-index:9999;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(8,8,8,0);
+    transition:background .35s ease;
+    pointer-events:none;
+    overflow:hidden;
+  }
+  .match-overlay.show{ background:rgba(8,8,8,.9); }
+  .match-burst{
+    position:relative;
+    text-align:center;
+    padding:0 30px;
+    transform:scale(.2);
+    opacity:0;
+    transition:transform .5s cubic-bezier(.17,.89,.32,1.49), opacity .3s ease;
+  }
+  .match-overlay.show .match-burst{ transform:scale(1); opacity:1; }
+  .match-overlay.hide .match-burst{ transform:scale(1.2); opacity:0; transition:transform .35s ease, opacity .35s ease; }
+  .match-burst::before{
+    content:'';
+    position:absolute; left:50%; top:50%;
+    width:40px;height:40px;
+    margin:-20px 0 0 -20px;
+    border-radius:50%;
+    background:radial-gradient(circle, rgba(225,6,0,.6), rgba(225,6,0,0) 70%);
+    transform:scale(0);
+    z-index:-1;
+  }
+  .match-overlay.show .match-burst::before{ animation: burstRing .9s ease-out forwards; }
+  @keyframes burstRing{ to{ transform:scale(16); } }
+  .match-title{
+    font-family:'Anton',sans-serif;
+    font-size:clamp(32px, 13vw, 52px);
+    line-height:1;
+    letter-spacing:1px;
+    color:#fff;
+    -webkit-text-stroke:2px var(--red2);
+    text-transform:uppercase;
+  }
+  .match-sub{
+    font-family:'Permanent Marker',cursive;
+    font-size:20px;
+    color:var(--red2);
+    margin-top:10px;
+    transform:rotate(-3deg);
+  }
+  .match-spark{
+    position:absolute; left:50%; top:50%; font-size:22px;
+    transform:translate(-50%,-50%);
+    opacity:0;
+  }
+  .match-overlay.show .match-spark{
+    animation: sparkOut .8s ease-out forwards;
+  }
+  @keyframes sparkOut{
+    0%{ transform:translate(-50%,-50%) scale(.4); opacity:1; }
+    100%{ transform:translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(1.4); opacity:0; }
+  }
 </style>
 </head>
 <body>
@@ -619,6 +680,66 @@
     return others().filter(p=>!seen.has(p.id));
   }
 
+  // ---------- MATCH (likes mutuos) ----------
+  const myKnownMatches = new Set(); // solo en memoria: si se reinician los likes, puede volver a sonar
+
+  function myMatches(){
+    if(!state.me) return [];
+    const mine = swipesCache[state.me];
+    if(!mine || !mine.likes) return [];
+    return mine.likes.filter(id=>{
+      const other = swipesCache[id];
+      return other && (other.likes || []).includes(state.me);
+    });
+  }
+
+  function checkForNewMatches(){
+    if(!state.me) return;
+    myMatches().forEach(id=>{
+      if(!myKnownMatches.has(id)){
+        myKnownMatches.add(id);
+        queueMatchCelebration(personById(id));
+      }
+    });
+  }
+
+  let matchQueue = [];
+  let matchShowing = false;
+  function queueMatchCelebration(person){
+    if(!person) return;
+    matchQueue.push(person);
+    if(!matchShowing) showNextMatch();
+  }
+  function showNextMatch(){
+    const person = matchQueue.shift();
+    if(!person){ matchShowing = false; return; }
+    matchShowing = true;
+    const overlay = document.createElement('div');
+    overlay.className = 'match-overlay';
+    const sparkEmojis = ['🔥','❤️','✨','🍺','🔥','❤️'];
+    const sparks = sparkEmojis.map((em,i)=>{
+      const angle = (Math.PI*2/sparkEmojis.length)*i;
+      const dist = 130;
+      const tx = Math.round(Math.cos(angle)*dist);
+      const ty = Math.round(Math.sin(angle)*dist);
+      return `<span class="match-spark" style="--tx:${tx}px;--ty:${ty}px;animation-delay:.05s">${em}</span>`;
+    }).join('');
+    overlay.innerHTML = `<div class="match-burst">
+      ${sparks}
+      <div class="match-title">¡Hay rambla!</div>
+      <div class="match-sub">con ${esc(person.name)}</div>
+    </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(()=> overlay.classList.add('show'));
+    setTimeout(()=>{
+      overlay.classList.add('hide');
+      setTimeout(()=>{
+        overlay.remove();
+        showNextMatch();
+      }, 400);
+    }, 2400);
+  }
+
   function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
   function initials(name){
@@ -627,6 +748,7 @@
 
   function render(){
     const app = document.getElementById('app');
+    checkForNewMatches();
 
     if(state.screen === 'splash'){
       app.innerHTML = renderSplash();
@@ -918,6 +1040,9 @@
       <div id="matchesArea"></div>
 
       ${FIREBASE_CONFIGURED ? `<div class="row-btns" style="margin-top:22px;">
+        <button class="btn danger-btn" id="resetLikesBtn">Reiniciar likes (mantiene perfiles)</button>
+      </div>
+      <div class="row-btns" style="margin-top:10px;">
         <button class="btn danger-btn" id="resetAllBtn">Borrar todos los perfiles y likes de la fiesta</button>
       </div>` : ''}
       <span class="backlink" id="backToLogin">‹ Volver</span>
@@ -947,6 +1072,16 @@
       db.collection('profiles').get().then(snap=>Promise.all(snap.docs.map(d=>d.ref.delete()))),
       db.collection('swipes').get().then(snap=>Promise.all(snap.docs.map(d=>d.ref.delete())))
     ]).then(()=>{ alert('Listo, se borró todo.'); }).catch(e=>{ console.error(e); alert('Algo falló al borrar. Mirá la consola.'); });
+  }
+
+  function resetLikesOnly(){
+    if(!db) return;
+    const ok = confirm('¿Reiniciar los likes y pases de todos los invitados? Los perfiles y fotos se mantienen. No se puede deshacer.');
+    if(!ok) return;
+    db.collection('swipes').get()
+      .then(snap=>Promise.all(snap.docs.map(d=>d.ref.delete())))
+      .then(()=>{ alert('Listo, los likes se reiniciaron.'); })
+      .catch(e=>{ console.error(e); alert('Algo falló al reiniciar. Mirá la consola.'); });
   }
 
   // ---------- EVENTS ----------
@@ -1118,6 +1253,9 @@
     }
     const resetAllBtn = q('#resetAllBtn');
     if(resetAllBtn) resetAllBtn.addEventListener('click', resetAllPartyData);
+
+    const resetLikesBtn = q('#resetLikesBtn');
+    if(resetLikesBtn) resetLikesBtn.addEventListener('click', resetLikesOnly);
 
     const addGuestBtn = q('#addGuestBtn');
     if(addGuestBtn){
