@@ -659,7 +659,9 @@
     tapCount: 0,
     photoIdx: {},
     draftProfile: null,
-    newGuestResult: null
+    newGuestResult: null,
+    adminEditingId: null,
+    adminEditDraft: null
   };
 
   async function sha256Hex(str){
@@ -779,6 +781,7 @@
     else if(state.screen === 'end') html += renderEnd();
     else if(state.screen === 'matches') html += renderMyMatches();
     else if(state.screen === 'admin') html += renderAdmin();
+    else if(state.screen === 'adminEdit') html += renderAdminEdit();
 
     app.innerHTML = html;
     bindEvents();
@@ -1035,7 +1038,10 @@
       const photoTag = photos.length ? `📷 ${photos.length}` : '⚠️ sin foto';
       return `<div class="admin-item" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
         <div><strong>${esc(p.name)}</strong> ${genderTag}<br><span style="color:var(--gray);font-size:12px;">${photoTag}</span></div>
-        <span class="backlink" data-remove-guest="${p.id}" style="margin:0;color:#ff8a85;white-space:nowrap;">🗑 Eliminar</span>
+        <div style="display:flex;gap:12px;flex-shrink:0;">
+          <span class="backlink" data-admin-edit="${p.id}" style="margin:0;white-space:nowrap;">✏️ Editar</span>
+          <span class="backlink" data-remove-guest="${p.id}" style="margin:0;color:#ff8a85;white-space:nowrap;">🗑 Eliminar</span>
+        </div>
       </div>`;
     }).join('');
 
@@ -1073,6 +1079,54 @@
         <button class="btn danger-btn" id="resetLikesBtn">Reiniciar likes de la fiesta</button>
       </div>` : ''}
       <span class="backlink" id="backToLogin">‹ Volver</span>
+    </div>`;
+  }
+
+  // ---------- ADMIN: EDITAR PERFIL DE UN INVITADO ----------
+  function renderAdminEdit(){
+    const person = personById(state.adminEditingId);
+    if(!person){
+      return `<div class="screen">
+        <div class="empty-note">Ese invitado ya no existe (puede que lo hayas eliminado).</div>
+        <span class="backlink" id="backToAdmin">‹ Volver al panel</span>
+      </div>`;
+    }
+    if(!state.adminEditDraft){
+      state.adminEditDraft = {bio: person.bio || (person.bullets||[]).join(' · '), photos: (person.photos||[]).slice()};
+    }
+    const draft = state.adminEditDraft;
+    const isExtra = !!extraGuestsCache[person.id];
+    const photosHtml = (draft.photos||[]).map((src,i)=>`
+      <div style="position:relative;">
+        <img src="${src}" style="width:110px;height:150px;object-fit:cover;border-radius:10px;border:2px solid var(--red);">
+        <div data-admin-rmphoto="${i}" style="position:absolute;top:-8px;right:-8px;width:26px;height:26px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;">✕</div>
+      </div>
+    `).join('');
+    return `<div class="screen">
+      <div class="lead">Editar <span class="accent">${esc(person.name)}</span></div>
+      <div class="card-block">
+        ${isExtra ? `
+          <label class="field-label">Nombre</label>
+          <input type="text" id="adminEditName" value="${esc(person.name)}" style="margin-bottom:10px;">
+          <label class="field-label">Género</label>
+          <select id="adminEditGender" style="margin-bottom:10px;">
+            <option value="hombre" ${person.gender==='hombre'?'selected':''}>Hombre</option>
+            <option value="mujer" ${person.gender==='mujer'?'selected':''}>Mujer</option>
+          </select>
+          <label class="field-label">Instagram</label>
+          <input type="text" id="adminEditIg" value="${esc(person.ig||'')}">
+        ` : `<div class="hint">Nombre / género / Instagram de este invitado vienen de la lista original y no se editan desde acá.</div>`}
+        <label class="field-label" style="margin-top:14px;">Sobre esta persona</label>
+        <textarea id="adminEditBio" rows="4">${esc(draft.bio||'')}</textarea>
+        <label class="field-label" style="margin-top:14px;">Fotos (hasta 3)</label>
+        <div class="photo-row" id="adminPhotoRow">
+          ${photosHtml}
+          ${(draft.photos||[]).length < 3 ? '<div class="photo-add" id="adminAddPhotoBtn">+</div>' : ''}
+        </div>
+        <input type="file" id="adminPhotoInput" accept="image/*">
+      </div>
+      <button class="btn btn-red" id="adminSaveProfileBtn">Guardar cambios</button>
+      <span class="backlink" id="backToAdmin">‹ Volver al panel, sin guardar</span>
     </div>`;
   }
 
@@ -1341,6 +1395,102 @@
         }
       });
     });
+
+    qa('[data-admin-edit]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        state.adminEditingId = el.getAttribute('data-admin-edit');
+        state.adminEditDraft = null;
+        state.screen = 'adminEdit';
+        render();
+      });
+    });
+
+    const backToAdmin = q('#backToAdmin');
+    if(backToAdmin) backToAdmin.addEventListener('click', ()=>{
+      state.adminEditingId = null;
+      state.adminEditDraft = null;
+      state.screen = 'admin';
+      render();
+    });
+
+    const adminAddPhotoBtn = q('#adminAddPhotoBtn');
+    const adminPhotoInput = q('#adminPhotoInput');
+    if(adminAddPhotoBtn && adminPhotoInput){
+      adminAddPhotoBtn.addEventListener('click', ()=>adminPhotoInput.click());
+      adminPhotoInput.addEventListener('change', (e)=>{
+        const file = e.target.files[0];
+        if(!file) return;
+        const img = new Image();
+        const reader = new FileReader();
+        reader.onload = ev=>{
+          img.onload = ()=>{
+            const canvas = document.createElement('canvas');
+            const maxW = 480;
+            const scale = Math.min(1, maxW/img.width);
+            canvas.width = img.width*scale; canvas.height = img.height*scale;
+            canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+            if(!state.adminEditDraft) state.adminEditDraft = {bio:'', photos:[]};
+            state.adminEditDraft.photos = state.adminEditDraft.photos || [];
+            if(state.adminEditDraft.photos.length < 3) state.adminEditDraft.photos.push(dataUrl);
+            render();
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+    qa('[data-admin-rmphoto]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const idx = parseInt(el.getAttribute('data-admin-rmphoto'), 10);
+        if(state.adminEditDraft && state.adminEditDraft.photos) state.adminEditDraft.photos.splice(idx, 1);
+        render();
+      });
+    });
+
+    const adminSaveProfileBtn = q('#adminSaveProfileBtn');
+    if(adminSaveProfileBtn){
+      adminSaveProfileBtn.addEventListener('click', async ()=>{
+        const id = state.adminEditingId;
+        const person = personById(id);
+        if(!person || !db) return;
+        const draft = state.adminEditDraft || {photos:[]};
+        const bioInput = q('#adminEditBio');
+        draft.bio = bioInput ? bioInput.value : (draft.bio||'');
+        const isExtra = !!extraGuestsCache[id];
+        adminSaveProfileBtn.disabled = true;
+        try{
+          await ensureAuth();
+          const writes = [
+            db.collection('profiles').doc(id).set({
+              name: person.name,
+              bio: draft.bio || '',
+              photos: draft.photos || [],
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, {merge:true})
+          ];
+          if(isExtra){
+            const nameInput = q('#adminEditName');
+            const genderSelect = q('#adminEditGender');
+            const igInput = q('#adminEditIg');
+            writes.push(db.collection('guests').doc(id).set({
+              name: nameInput ? nameInput.value.trim() || person.name : person.name,
+              gender: genderSelect ? genderSelect.value : person.gender,
+              ig: igInput ? igInput.value.trim().replace(/^@/, '') : (person.ig||'')
+            }, {merge:true}));
+          }
+          await Promise.all(writes);
+          state.adminEditingId = null;
+          state.adminEditDraft = null;
+          state.screen = 'admin';
+          render();
+        }catch(e){
+          console.error('No se pudo guardar', e);
+          alert('Algo falló al guardar: ' + (e && e.message ? e.message : e));
+        }
+        adminSaveProfileBtn.disabled = false;
+      });
+    }
   }
 
   // Initial screen
