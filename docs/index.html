@@ -832,7 +832,7 @@
           ${photosHtml}
           ${(draft.photos||[]).length < 3 ? '<div class="photo-add" id="addPhotoBtn">+</div>' : ''}
         </div>
-        <input type="file" id="photoInput" accept="image/*" capture="environment">
+        <input type="file" id="photoInput" accept="image/*">
         <div class="hint">${FIREBASE_CONFIGURED ? 'Al guardar, todos los invitados lo ven al instante.' : 'Sync no configurado: esto queda solo en este celular.'}</div>
       </div>
       <button class="btn btn-red" id="saveProfileBtn">Guardar y ver invitados</button>
