@@ -662,7 +662,9 @@
     draftProfile: null,
     newGuestResult: null,
     adminEditingId: null,
-    adminEditDraft: null
+    adminEditDraft: null,
+    viewingMatchId: null,
+    matchPhotoIdx: 0
   };
 
   async function sha256Hex(str){
@@ -782,6 +784,7 @@
     else if(state.screen === 'deck') html += renderDeck();
     else if(state.screen === 'end') html += renderEnd();
     else if(state.screen === 'matches') html += renderMyMatches();
+    else if(state.screen === 'matchProfile') html += renderMatchProfile();
     else if(state.screen === 'admin') html += renderAdmin();
     else if(state.screen === 'adminEdit') html += renderAdminEdit();
 
@@ -997,12 +1000,56 @@
   // ---------- MIS MATCHES ----------
   function renderMyMatches(){
     const matches = myMatches().map(id=>personById(id)).filter(Boolean);
-    const list = matches.map(p=>`<li>❤️ ${esc(p.name)} ${p.ig ? `<a class="ig-link" href="https://instagram.com/${encodeURIComponent(p.ig)}" target="_blank" rel="noopener" style="margin-left:6px;">📷 @${esc(p.ig)}</a>` : ''}</li>`).join('');
+    const list = matches.map(p=>{
+      const thumb = (p.photos && p.photos.length)
+        ? `<img src="${p.photos[0]}" style="width:52px;height:52px;border-radius:10px;object-fit:cover;margin-right:12px;flex-shrink:0;">`
+        : `<div style="width:52px;height:52px;border-radius:10px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-family:'Anton';color:rgba(225,6,0,.6);font-size:16px;margin-right:12px;flex-shrink:0;">${esc(initials(p.name))}</div>`;
+      return `<li data-view-match="${p.id}" style="display:flex;align-items:center;cursor:pointer;">
+        ${thumb}
+        <div style="flex:1;">❤️ ${esc(p.name)}</div>
+        <span style="color:var(--gray);font-size:18px;">›</span>
+      </li>`;
+    }).join('');
     return `<div class="screen">
       <div class="lead">Tus <span class="accent">matches</span> 🔥</div>
-      <div class="sub">${matches.length ? 'Le gustaste a estas personas tanto como ellas a vos.' : 'Todavía no tenés matches. ¡Seguí swipeando!'}</div>
+      <div class="sub">${matches.length ? 'Tocá a alguien para ver su perfil completo.' : 'Todavía no tenés matches. ¡Seguí swipeando!'}</div>
       ${matches.length ? `<ul class="likes-list">${list}</ul>` : '<div class="empty-note">Cuando haya un like mutuo, va a aparecer acá.</div>'}
       <span class="backlink" id="backFromMatches">‹ Volver</span>
+    </div>`;
+  }
+
+  function renderMatchProfile(){
+    const p = personById(state.viewingMatchId);
+    if(!p){
+      return `<div class="screen">
+        <div class="empty-note">Ese perfil ya no está disponible.</div>
+        <span class="backlink" id="backToMatchesList">‹ Volver a mis matches</span>
+      </div>`;
+    }
+    const photos = p.photos && p.photos.length ? p.photos : null;
+    const curIdx = Math.min(state.matchPhotoIdx || 0, photos ? photos.length-1 : 0);
+    const photo = photos
+      ? `<div id="matchPhotoBg" class="photo-bg" style="background-image:url('${photos[curIdx]}')"></div><img id="matchPhotoImg" src="${photos[curIdx]}">`
+      : `<div class="avatar-fallback">${esc(initials(p.name))}</div>`;
+    const dots = (photos && photos.length>1) ? `<div class="dots-row">${photos.map((_,i)=>`<div class="dot ${i===curIdx?'active':''}"></div>`).join('')}</div>` : '';
+    const tapZones = (photos && photos.length>1) ? `<div class="tap-zone left" id="matchTapPrev"></div><div class="tap-zone right" id="matchTapNext"></div>` : '';
+    const bullets = (p.bullets && p.bullets.length) ? p.bullets : (p.bio ? p.bio.split(/[·\-\n]/).map(s=>s.trim()).filter(Boolean) : []);
+    return `<div class="screen">
+      <div class="deck-wrap" style="height:60vh;min-height:380px;">
+        <div class="swipe-card">
+          <div class="photo-area">
+            ${photo}
+            ${dots}
+            ${tapZones}
+          </div>
+          <div class="info-area">
+            <div class="p-name">${esc(p.name)}</div>
+            <ul class="p-bullets">${bullets.map(b=>`<li>${esc(b)}</li>`).join('')}</ul>
+            ${p.ig ? `<a class="ig-link" href="https://instagram.com/${encodeURIComponent(p.ig)}" target="_blank" rel="noopener">📷 @${esc(p.ig)}</a>` : ''}
+          </div>
+        </div>
+      </div>
+      <span class="backlink" id="backToMatchesList">‹ Volver a mis matches</span>
     </div>`;
   }
 
@@ -1228,6 +1275,41 @@
 
     const backFromMatches = q('#backFromMatches');
     if(backFromMatches) backFromMatches.addEventListener('click', ()=>{ state.screen = pendingDeck().length ? 'deck' : 'end'; render(); });
+
+    qa('[data-view-match]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        state.viewingMatchId = el.getAttribute('data-view-match');
+        state.matchPhotoIdx = 0;
+        state.screen = 'matchProfile';
+        render();
+      });
+    });
+
+    const backToMatchesList = q('#backToMatchesList');
+    if(backToMatchesList) backToMatchesList.addEventListener('click', ()=>{
+      state.viewingMatchId = null;
+      state.screen = 'matches';
+      render();
+    });
+
+    const matchTapPrev = q('#matchTapPrev');
+    const matchTapNext = q('#matchTapNext');
+    if(matchTapPrev || matchTapNext){
+      const p = personById(state.viewingMatchId);
+      const photos = (p && p.photos) || [];
+      const changeMatchPhoto = (dir)=>{
+        const cur = state.matchPhotoIdx || 0;
+        const next = Math.max(0, Math.min(photos.length-1, cur+dir));
+        state.matchPhotoIdx = next;
+        const img = q('#matchPhotoImg');
+        if(img) img.src = photos[next];
+        const bg = q('#matchPhotoBg');
+        if(bg) bg.style.backgroundImage = `url('${photos[next]}')`;
+        qa('.dots-row .dot').forEach((d,i)=>d.classList.toggle('active', i===next));
+      };
+      if(matchTapPrev) matchTapPrev.addEventListener('click', ()=>changeMatchPhoto(-1));
+      if(matchTapNext) matchTapNext.addEventListener('click', ()=>changeMatchPhoto(1));
+    }
 
     // Profile screen
     const addPhotoBtn = q('#addPhotoBtn');
