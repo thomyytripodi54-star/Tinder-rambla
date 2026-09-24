@@ -163,6 +163,20 @@
   .dots-row{position:absolute;top:10px;left:10px;right:10px;display:flex;gap:5px;z-index:6;}
   .dot{flex:1;height:3px;background:rgba(255,255,255,.3);border-radius:3px;}
   .dot.active{background:#fff;}
+  .zoom-btn{
+    position:absolute;bottom:12px;right:12px;z-index:7;
+    width:34px;height:34px;border-radius:50%;
+    background:rgba(10,10,10,.55);backdrop-filter:blur(2px);
+    display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;
+  }
+  .lightbox{
+    position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0);
+    display:flex;align-items:center;justify-content:center;padding:20px;
+    opacity:0;pointer-events:none;transition:opacity .2s ease, background .2s ease;
+  }
+  .lightbox.show{background:rgba(0,0,0,.92);opacity:1;pointer-events:auto;}
+  .lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;}
+  .lightbox-close{position:absolute;top:18px;right:18px;font-size:28px;color:#fff;cursor:pointer;line-height:1;}
 
   /* ADMIN DASHBOARD */
   .likeline{padding:10px 14px;border-radius:10px;margin-bottom:6px;font-size:14px;font-weight:600;background:#161616;border:1px solid #2a2a2a;}
@@ -638,8 +652,12 @@
     return base.map(p=>{
       const live = profilesCache[p.id];
       if(live){
+        // Una vez que la persona edita su perfil desde la app, lo que escribió
+        // manda: si no, las bullets originales del seed tapaban la bio nueva
+        // y su tarjeta seguía mostrando texto viejo/genérico.
         return Object.assign({}, p, {
           bio: live.bio || '',
+          bullets: [],
           photos: (live.photos && live.photos.length) ? live.photos : (p.photos || [])
         });
       }
@@ -664,7 +682,9 @@
     adminEditingId: null,
     adminEditDraft: null,
     viewingMatchId: null,
-    matchPhotoIdx: 0
+    matchPhotoIdx: 0,
+    profilePreviewIdx: 0,
+    adminPreviewIdx: 0
   };
 
   async function sha256Hex(str){
@@ -763,6 +783,47 @@
     return name.split(' ').filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
   }
 
+  // Una característica por renglón alcanza — separa por salto de línea (lo normal
+  // al escribir en el celular), y también acepta "·" o "-" para el que prefiera
+  // ponerlas todas juntas.
+  function bioToBullets(bullets, bio){
+    if(bullets && bullets.length) return bullets;
+    if(!bio) return [];
+    return bio.split(/\n|·|-{1,2}\s/).map(s=>s.trim()).filter(Boolean);
+  }
+
+  // idPrefix vacío = tarjeta de fondo del mazo (no interactiva, sin puntos/zoom).
+  function photoCardHtml(name, photos, curIdx, idPrefix){
+    if(!photos || !photos.length){
+      return `<div class="avatar-fallback">${esc(initials(name))}</div>`;
+    }
+    const i = Math.min(curIdx||0, photos.length-1);
+    const bgImg = `<div ${idPrefix?`id="${idPrefix}Bg"`:''} class="photo-bg" style="background-image:url('${photos[i]}')"></div><img ${idPrefix?`id="${idPrefix}Img"`:''} src="${photos[i]}">`;
+    if(!idPrefix) return bgImg;
+    const dots = photos.length>1 ? `<div class="dots-row">${photos.map((_,d)=>`<div class="dot ${d===i?'active':''}"></div>`).join('')}</div>` : '';
+    const tapZones = photos.length>1 ? `<div class="tap-zone left" id="${idPrefix}TapPrev"></div><div class="tap-zone right" id="${idPrefix}TapNext"></div>` : '';
+    const zoomBtn = `<div class="zoom-btn" id="${idPrefix}ZoomBtn" data-zoom-src="${photos[i]}">🔍</div>`;
+    return bgImg + dots + tapZones + zoomBtn;
+  }
+
+  function openLightbox(src){
+    let lb = document.getElementById('imgLightbox');
+    if(!lb){
+      lb = document.createElement('div');
+      lb.id = 'imgLightbox';
+      lb.className = 'lightbox';
+      lb.innerHTML = '<div class="lightbox-close">✕</div><img id="lightboxImg">';
+      lb.addEventListener('click', closeLightbox);
+      document.body.appendChild(lb);
+    }
+    lb.querySelector('#lightboxImg').src = src;
+    requestAnimationFrame(()=> lb.classList.add('show'));
+  }
+  function closeLightbox(){
+    const lb = document.getElementById('imgLightbox');
+    if(lb) lb.classList.remove('show');
+  }
+
   function render(){
     const app = document.getElementById('app');
     checkForNewMatches();
@@ -836,23 +897,35 @@
   function renderProfile(){
     const me = personById(state.me);
     if(!state.draftProfile){
-      state.draftProfile = {bio: me.bio || (me.bullets||[]).join(' · '), photos: (me.photos||[]).slice()};
+      state.draftProfile = {bio: me.bio || (me.bullets||[]).join('\n'), photos: (me.photos||[]).slice()};
     }
     const draft = state.draftProfile;
     const photosHtml = (draft.photos||[]).map((src,i)=>`<img class="photo-thumb" src="${src}" data-rmphoto="${i}">`).join('');
+    const previewPhoto = photoCardHtml(me.name, draft.photos, state.profilePreviewIdx, 'profilePreview');
+    const previewBullets = bioToBullets([], draft.bio);
     return `<div class="screen">
       <div class="lead">Armá tu <span class="accent">perfil</span></div>
       <div class="sub">${esc(me.name)} · así te van a ver los demás invitados</div>
-      <div class="card-block">
-        <label class="field-label">Sobre vos</label>
-        <textarea id="bioInput" rows="4" placeholder="Edad, qué hacés, algo random y copado sobre vos...">${esc(draft.bio||'')}</textarea>
-        <label class="field-label" style="margin-top:14px;">Fotos (hasta ${MAX_PHOTOS})</label>
-        <div class="photo-row" id="photoRow">
-          ${photosHtml}
-          ${(draft.photos||[]).length < MAX_PHOTOS ? '<div class="photo-add" id="addPhotoBtn">+</div>' : ''}
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-bottom:16px;">
+        <div style="flex:0 0 150px;">
+          <label class="field-label" style="display:block;margin-bottom:8px;">Vista previa</label>
+          <div class="photo-area" style="height:220px;border-radius:16px;border:1px solid #2a2a2a;">
+            ${previewPhoto}
+          </div>
+          <ul class="p-bullets" id="profilePreviewBullets" style="margin-top:8px;">${previewBullets.map(b=>`<li>${esc(b)}</li>`).join('')}</ul>
         </div>
-        <input type="file" id="photoInput" accept="image/*">
-        <div class="hint">${FIREBASE_CONFIGURED ? 'Al guardar, todos los invitados lo ven al instante.' : 'Sync no configurado: esto queda solo en este celular.'}</div>
+        <div class="card-block" style="flex:1 1 200px;min-width:200px;margin-bottom:0;">
+          <label class="field-label">Sobre vos</label>
+          <textarea id="bioInput" rows="5" placeholder="Una característica por renglón, por ejemplo:&#10;24 años&#10;Estudio Ingeniería&#10;Me gusta el asado">${esc(draft.bio||'')}</textarea>
+          <div class="hint">Escribí cada cosa en un renglón — se separan solas, sin guiones.</div>
+          <label class="field-label" style="margin-top:14px;">Fotos (hasta ${MAX_PHOTOS})</label>
+          <div class="photo-row" id="photoRow">
+            ${photosHtml}
+            ${(draft.photos||[]).length < MAX_PHOTOS ? '<div class="photo-add" id="addPhotoBtn">+</div>' : ''}
+          </div>
+          <input type="file" id="photoInput" accept="image/*">
+          <div class="hint">${FIREBASE_CONFIGURED ? 'Al guardar, todos los invitados lo ven al instante.' : 'Sync no configurado: esto queda solo en este celular.'}</div>
+        </div>
       </div>
       <button class="btn btn-red" id="saveProfileBtn">Guardar y ver invitados</button>
       <span class="backlink" id="backToLogin">‹ Cambiar de invitado</span>
@@ -878,16 +951,12 @@
       const translate = depth*10;
       const photos = p.photos && p.photos.length ? p.photos : null;
       const curIdx = Math.min(state.photoIdx[p.id]||0, photos ? photos.length-1 : 0);
-      const photo = photos ? `<div id="${isTop?'cardPhotoBg':''}" class="photo-bg" style="background-image:url('${photos[curIdx]}')"></div><img id="${isTop?'cardPhotoImg':''}" src="${photos[curIdx]}">` : `<div class="avatar-fallback">${esc(initials(p.name))}</div>`;
-      const dots = (isTop && photos && photos.length>1) ? `<div class="dots-row">${photos.map((_,i)=>`<div class="dot ${i===curIdx?'active':''}"></div>`).join('')}</div>` : '';
-      const tapZones = (isTop && photos && photos.length>1) ? `<div class="tap-zone left" id="tapPrevPhoto"></div><div class="tap-zone right" id="tapNextPhoto"></div>` : '';
-      const bullets = (p.bullets && p.bullets.length) ? p.bullets : (p.bio ? p.bio.split(/[·\-\n]/).map(s=>s.trim()).filter(Boolean) : []);
+      const photo = photoCardHtml(p.name, photos, curIdx, isTop ? 'cardPhoto' : '');
+      const bullets = bioToBullets(p.bullets, p.bio);
       const mystery = (!p.bullets || p.bullets.length===0) && !p.bio;
       return `<div class="swipe-card" style="z-index:${idx};transform:translateY(${translate}px) scale(${scale});" ${isTop?'id="topCard"':''} data-id="${p.id}">
         <div class="photo-area">
           ${photo}
-          ${dots}
-          ${tapZones}
           ${isTop?'<div class="stamp stamp-like" id="stampLike">LIKE</div><div class="stamp stamp-pass" id="stampPass">PASO</div>':''}
           ${mystery?'<div class="mystery-tag">🕵️ Perfil misterioso — mirá su Instagram</div>':''}
         </div>
@@ -934,27 +1003,32 @@
   function attachDrag(){
     const card = document.getElementById('topCard');
     if(!card) return;
-    let startX=0, startY=0, curX=0, curY=0, dragging=false;
+    // Todo atado a `card` (nunca a `window`): la tarjeta se destruye en cada
+    // render, así que estos listeners nunca se acumulan entre renders — antes
+    // quedaban pegados a `window` y con la sync en vivo re-disparando render()
+    // todo el tiempo, se apilaban y a veces terminaban swipeando la carta
+    // equivocada.
+    let startX=0, startY=0, curX=0, curY=0, dragging=false, decided=false;
     const likeStamp = document.getElementById('stampLike');
     const passStamp = document.getElementById('stampPass');
 
     function pointerDown(e){
+      if(decided) return;
       dragging = true;
-      const pt = e.touches ? e.touches[0] : e;
-      startX = pt.clientX; startY = pt.clientY;
+      startX = e.clientX; startY = e.clientY;
+      if(card.setPointerCapture) card.setPointerCapture(e.pointerId);
     }
     function pointerMove(e){
-      if(!dragging) return;
-      const pt = e.touches ? e.touches[0] : e;
-      curX = pt.clientX - startX;
-      curY = pt.clientY - startY;
+      if(!dragging || decided) return;
+      curX = e.clientX - startX;
+      curY = e.clientY - startY;
       const rot = curX / 20;
       card.style.transform = `translate(${curX}px, ${curY}px) rotate(${rot}deg)`;
       if(likeStamp) likeStamp.style.opacity = Math.min(Math.max(curX/80,0),1);
       if(passStamp) passStamp.style.opacity = Math.min(Math.max(-curX/80,0),1);
     }
     function pointerUp(){
-      if(!dragging) return;
+      if(!dragging || decided) return;
       dragging = false;
       if(curX > 100){
         flyOut(1);
@@ -969,17 +1043,16 @@
       curX = 0; curY = 0;
     }
     function flyOut(dir){
+      decided = true; // una sola decisión por tarjeta, pase lo que pase con re-renders
       card.style.transition = 'transform .35s ease';
       card.style.transform = `translate(${dir*600}px, ${curY}px) rotate(${dir*30}deg)`;
       setTimeout(()=>swipeDecide(dir===1), 260);
     }
 
-    card.addEventListener('mousedown', pointerDown);
-    window.addEventListener('mousemove', pointerMove);
-    window.addEventListener('mouseup', pointerUp);
-    card.addEventListener('touchstart', pointerDown, {passive:true});
-    card.addEventListener('touchmove', pointerMove, {passive:true});
-    card.addEventListener('touchend', pointerUp);
+    card.addEventListener('pointerdown', pointerDown);
+    card.addEventListener('pointermove', pointerMove);
+    card.addEventListener('pointerup', pointerUp);
+    card.addEventListener('pointercancel', pointerUp);
   }
 
   // ---------- END ----------
@@ -1028,19 +1101,13 @@
     }
     const photos = p.photos && p.photos.length ? p.photos : null;
     const curIdx = Math.min(state.matchPhotoIdx || 0, photos ? photos.length-1 : 0);
-    const photo = photos
-      ? `<div id="matchPhotoBg" class="photo-bg" style="background-image:url('${photos[curIdx]}')"></div><img id="matchPhotoImg" src="${photos[curIdx]}">`
-      : `<div class="avatar-fallback">${esc(initials(p.name))}</div>`;
-    const dots = (photos && photos.length>1) ? `<div class="dots-row">${photos.map((_,i)=>`<div class="dot ${i===curIdx?'active':''}"></div>`).join('')}</div>` : '';
-    const tapZones = (photos && photos.length>1) ? `<div class="tap-zone left" id="matchTapPrev"></div><div class="tap-zone right" id="matchTapNext"></div>` : '';
-    const bullets = (p.bullets && p.bullets.length) ? p.bullets : (p.bio ? p.bio.split(/[·\-\n]/).map(s=>s.trim()).filter(Boolean) : []);
+    const photo = photoCardHtml(p.name, photos, curIdx, 'matchPhoto');
+    const bullets = bioToBullets(p.bullets, p.bio);
     return `<div class="screen">
       <div class="deck-wrap" style="height:60vh;min-height:380px;">
         <div class="swipe-card">
           <div class="photo-area">
             ${photo}
-            ${dots}
-            ${tapZones}
           </div>
           <div class="info-area">
             <div class="p-name">${esc(p.name)}</div>
@@ -1085,10 +1152,15 @@
       const photos = (live && live.photos && live.photos.length) ? live.photos : (p.photos || []);
       const genderTag = p.gender === 'mujer' ? '♀' : (p.gender === 'hombre' ? '♂' : '?');
       const photoTag = photos.length ? `📷 ${photos.length}` : '⚠️ sin foto';
-      return `<div class="admin-item" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-        <div><strong>${esc(p.name)}</strong> ${genderTag}<br><span style="color:var(--gray);font-size:12px;">${photoTag}</span></div>
-        <div style="display:flex;gap:12px;flex-shrink:0;">
+      const sw = swipesCache[p.id];
+      const likeCount = sw && sw.likes ? sw.likes.length : 0;
+      return `<div class="admin-item">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+          <div><strong>${esc(p.name)}</strong> ${genderTag}<br><span style="color:var(--gray);font-size:12px;">${photoTag} · ${likeCount} likes dados</span></div>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">
           <span class="backlink" data-admin-edit="${p.id}" style="margin:0;white-space:nowrap;">✏️ Editar</span>
+          <span class="backlink" data-reset-person-likes="${p.id}" style="margin:0;color:#8ff0ae;white-space:nowrap;">🔄 Resetear likes</span>
           <span class="backlink" data-remove-guest="${p.id}" style="margin:0;color:#ff8a85;white-space:nowrap;">🗑 Eliminar</span>
         </div>
       </div>`;
@@ -1141,7 +1213,7 @@
       </div>`;
     }
     if(!state.adminEditDraft){
-      state.adminEditDraft = {bio: person.bio || (person.bullets||[]).join(' · '), photos: (person.photos||[]).slice()};
+      state.adminEditDraft = {bio: person.bio || (person.bullets||[]).join('\n'), photos: (person.photos||[]).slice()};
     }
     const draft = state.adminEditDraft;
     const isExtra = !!extraGuestsCache[person.id];
@@ -1151,28 +1223,39 @@
         <div data-admin-rmphoto="${i}" style="position:absolute;top:-8px;right:-8px;width:26px;height:26px;border-radius:50%;background:var(--red);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;">✕</div>
       </div>
     `).join('');
+    const previewPhoto = photoCardHtml(person.name, draft.photos, state.adminPreviewIdx, 'adminPreview');
+    const previewBullets = bioToBullets([], draft.bio);
     return `<div class="screen">
       <div class="lead">Editar <span class="accent">${esc(person.name)}</span></div>
-      <div class="card-block">
-        ${isExtra ? `
-          <label class="field-label">Nombre</label>
-          <input type="text" id="adminEditName" value="${esc(person.name)}" style="margin-bottom:10px;">
-          <label class="field-label">Género</label>
-          <select id="adminEditGender" style="margin-bottom:10px;">
-            <option value="hombre" ${person.gender==='hombre'?'selected':''}>Hombre</option>
-            <option value="mujer" ${person.gender==='mujer'?'selected':''}>Mujer</option>
-          </select>
-          <label class="field-label">Instagram</label>
-          <input type="text" id="adminEditIg" value="${esc(person.ig||'')}">
-        ` : `<div class="hint">Nombre / género / Instagram de este invitado vienen de la lista original y no se editan desde acá.</div>`}
-        <label class="field-label" style="margin-top:14px;">Sobre esta persona</label>
-        <textarea id="adminEditBio" rows="4">${esc(draft.bio||'')}</textarea>
-        <label class="field-label" style="margin-top:14px;">Fotos (hasta ${MAX_PHOTOS})</label>
-        <div class="photo-row" id="adminPhotoRow">
-          ${photosHtml}
-          ${(draft.photos||[]).length < MAX_PHOTOS ? '<div class="photo-add" id="adminAddPhotoBtn">+</div>' : ''}
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-bottom:16px;">
+        <div style="flex:0 0 150px;">
+          <label class="field-label" style="display:block;margin-bottom:8px;">Vista previa</label>
+          <div class="photo-area" style="height:220px;border-radius:16px;border:1px solid #2a2a2a;">
+            ${previewPhoto}
+          </div>
+          <ul class="p-bullets" id="adminPreviewBullets" style="margin-top:8px;">${previewBullets.map(b=>`<li>${esc(b)}</li>`).join('')}</ul>
         </div>
-        <input type="file" id="adminPhotoInput" accept="image/*">
+        <div class="card-block" style="flex:1 1 200px;min-width:200px;margin-bottom:0;">
+          ${isExtra ? `
+            <label class="field-label">Nombre</label>
+            <input type="text" id="adminEditName" value="${esc(person.name)}" style="margin-bottom:10px;">
+            <label class="field-label">Género</label>
+            <select id="adminEditGender" style="margin-bottom:10px;">
+              <option value="hombre" ${person.gender==='hombre'?'selected':''}>Hombre</option>
+              <option value="mujer" ${person.gender==='mujer'?'selected':''}>Mujer</option>
+            </select>
+            <label class="field-label">Instagram</label>
+            <input type="text" id="adminEditIg" value="${esc(person.ig||'')}">
+          ` : `<div class="hint">Nombre / género / Instagram de este invitado vienen de la lista original y no se editan desde acá.</div>`}
+          <label class="field-label" style="margin-top:14px;">Sobre esta persona</label>
+          <textarea id="adminEditBio" rows="4" placeholder="Una característica por renglón">${esc(draft.bio||'')}</textarea>
+          <label class="field-label" style="margin-top:14px;">Fotos (hasta ${MAX_PHOTOS})</label>
+          <div class="photo-row" id="adminPhotoRow">
+            ${photosHtml}
+            ${(draft.photos||[]).length < MAX_PHOTOS ? '<div class="photo-add" id="adminAddPhotoBtn">+</div>' : ''}
+          </div>
+          <input type="file" id="adminPhotoInput" accept="image/*">
+        </div>
       </div>
       <button class="btn btn-red" id="adminSaveProfileBtn">Guardar cambios</button>
       <span class="backlink" id="backToAdmin">‹ Volver al panel, sin guardar</span>
@@ -1208,6 +1291,13 @@
   function bindEvents(){
     const q = sel => document.querySelector(sel);
     const qa = sel => document.querySelectorAll(sel);
+
+    qa('[data-zoom-src]').forEach(el=>{
+      el.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        openLightbox(el.getAttribute('data-zoom-src'));
+      });
+    });
 
     const enterSplashBtn = q('#enterSplashBtn');
     if(enterSplashBtn) enterSplashBtn.addEventListener('click', ()=>{ state.screen='login'; render(); });
@@ -1249,7 +1339,7 @@
           state.pinError = false;
           localStorage.setItem(LS.me, state.me);
           localStorage.setItem('ramblero_authed_'+state.me, '1');
-          state.draftProfile = null;
+          state.draftProfile = null; state.profilePreviewIdx = 0;
           state.screen = 'profile';
           render();
         } else {
@@ -1268,7 +1358,7 @@
     if(backToLogin) backToLogin.addEventListener('click', ()=>{ state.pendingId=null; state.pinError=false; state.screen='login'; render(); });
 
     const editProfileLink = q('#editProfileLink');
-    if(editProfileLink) editProfileLink.addEventListener('click', ()=>{ state.draftProfile = null; state.screen='profile'; render(); });
+    if(editProfileLink) editProfileLink.addEventListener('click', ()=>{ state.draftProfile = null; state.profilePreviewIdx = 0; state.screen='profile'; render(); });
 
     const viewMatchesLink = q('#viewMatchesLink');
     if(viewMatchesLink) viewMatchesLink.addEventListener('click', ()=>{ state.screen='matches'; render(); });
@@ -1292,8 +1382,8 @@
       render();
     });
 
-    const matchTapPrev = q('#matchTapPrev');
-    const matchTapNext = q('#matchTapNext');
+    const matchTapPrev = q('#matchPhotoTapPrev');
+    const matchTapNext = q('#matchPhotoTapNext');
     if(matchTapPrev || matchTapNext){
       const p = personById(state.viewingMatchId);
       const photos = (p && p.photos) || [];
@@ -1305,6 +1395,8 @@
         if(img) img.src = photos[next];
         const bg = q('#matchPhotoBg');
         if(bg) bg.style.backgroundImage = `url('${photos[next]}')`;
+        const zoomBtn = q('#matchPhotoZoomBtn');
+        if(zoomBtn) zoomBtn.setAttribute('data-zoom-src', photos[next]);
         qa('.dots-row .dot').forEach((d,i)=>d.classList.toggle('active', i===next));
       };
       if(matchTapPrev) matchTapPrev.addEventListener('click', ()=>changeMatchPhoto(-1));
@@ -1346,6 +1438,39 @@
         render();
       });
     });
+
+    const bioInput = q('#bioInput');
+    if(bioInput){
+      bioInput.addEventListener('input', (e)=>{
+        if(!state.draftProfile) state.draftProfile = {bio:'', photos:[]};
+        state.draftProfile.bio = e.target.value;
+        const previewList = q('#profilePreviewBullets');
+        if(previewList){
+          const bullets = bioToBullets([], e.target.value);
+          previewList.innerHTML = bullets.map(b=>`<li>${esc(b)}</li>`).join('');
+        }
+      });
+    }
+    const previewTapPrev = q('#profilePreviewTapPrev');
+    const previewTapNext = q('#profilePreviewTapNext');
+    if(previewTapPrev || previewTapNext){
+      const photos = (state.draftProfile && state.draftProfile.photos) || [];
+      const changePreviewPhoto = (dir)=>{
+        const cur = state.profilePreviewIdx || 0;
+        const next = Math.max(0, Math.min(photos.length-1, cur+dir));
+        state.profilePreviewIdx = next;
+        const img = q('#profilePreviewImg');
+        if(img) img.src = photos[next];
+        const bg = q('#profilePreviewBg');
+        if(bg) bg.style.backgroundImage = `url('${photos[next]}')`;
+        const zoomBtn = q('#profilePreviewZoomBtn');
+        if(zoomBtn) zoomBtn.setAttribute('data-zoom-src', photos[next]);
+        qa('.dots-row .dot').forEach((d,i)=>d.classList.toggle('active', i===next));
+      };
+      if(previewTapPrev) previewTapPrev.addEventListener('click', ()=>changePreviewPhoto(-1));
+      if(previewTapNext) previewTapNext.addEventListener('click', ()=>changePreviewPhoto(1));
+    }
+
     const saveProfileBtn = q('#saveProfileBtn');
     if(saveProfileBtn){
       saveProfileBtn.addEventListener('click', ()=>{
@@ -1354,7 +1479,7 @@
         draft.bio = bio;
         const me = personById(state.me);
         profilesCache[state.me] = {name: me.name, bio: draft.bio, photos: draft.photos||[]};
-        state.draftProfile = null;
+        state.draftProfile = null; state.profilePreviewIdx = 0;
         state.screen = 'deck';
         render();
         if(db){
@@ -1375,8 +1500,8 @@
     if(likeBtn) likeBtn.addEventListener('click', ()=>swipeDecide(true));
     if(passBtn) passBtn.addEventListener('click', ()=>swipeDecide(false));
 
-    const tapPrev = q('#tapPrevPhoto');
-    const tapNext = q('#tapNextPhoto');
+    const tapPrev = q('#cardPhotoTapPrev');
+    const tapNext = q('#cardPhotoTapNext');
     if(tapPrev || tapNext){
       const deck = pendingDeck();
       const p = deck[0];
@@ -1389,6 +1514,8 @@
         if(img) img.src = photos[next];
         const bg = q('#cardPhotoBg');
         if(bg) bg.style.backgroundImage = `url('${photos[next]}')`;
+        const zoomBtn = q('#cardPhotoZoomBtn');
+        if(zoomBtn) zoomBtn.setAttribute('data-zoom-src', photos[next]);
         qa('.dots-row .dot').forEach((d,i)=>d.classList.toggle('active', i===next));
       };
       if(tapPrev) tapPrev.addEventListener('click', ()=>changePhoto(-1));
@@ -1482,10 +1609,26 @@
       });
     });
 
+    qa('[data-reset-person-likes]').forEach(el=>{
+      el.addEventListener('click', async ()=>{
+        const id = el.getAttribute('data-reset-person-likes');
+        const person = personById(id);
+        const ok = confirm(`¿Reiniciar los likes y pases de ${person ? person.name : id}? Su perfil y fotos se mantienen. No se puede deshacer.`);
+        if(!ok || !db) return;
+        try{
+          await ensureAuth();
+          await db.collection('swipes').doc(id).delete();
+        }catch(e){
+          console.error('No se pudo resetear', e);
+          alert('Algo falló al resetear: ' + (e && e.message ? e.message : e));
+        }
+      });
+    });
+
     qa('[data-admin-edit]').forEach(el=>{
       el.addEventListener('click', ()=>{
         state.adminEditingId = el.getAttribute('data-admin-edit');
-        state.adminEditDraft = null;
+        state.adminEditDraft = null; state.adminPreviewIdx = 0;
         state.screen = 'adminEdit';
         render();
       });
@@ -1494,7 +1637,7 @@
     const backToAdmin = q('#backToAdmin');
     if(backToAdmin) backToAdmin.addEventListener('click', ()=>{
       state.adminEditingId = null;
-      state.adminEditDraft = null;
+      state.adminEditDraft = null; state.adminPreviewIdx = 0;
       state.screen = 'admin';
       render();
     });
@@ -1534,6 +1677,38 @@
       });
     });
 
+    const adminEditBio = q('#adminEditBio');
+    if(adminEditBio){
+      adminEditBio.addEventListener('input', (e)=>{
+        if(!state.adminEditDraft) state.adminEditDraft = {bio:'', photos:[]};
+        state.adminEditDraft.bio = e.target.value;
+        const previewList = q('#adminPreviewBullets');
+        if(previewList){
+          const bullets = bioToBullets([], e.target.value);
+          previewList.innerHTML = bullets.map(b=>`<li>${esc(b)}</li>`).join('');
+        }
+      });
+    }
+    const adminPreviewTapPrev = q('#adminPreviewTapPrev');
+    const adminPreviewTapNext = q('#adminPreviewTapNext');
+    if(adminPreviewTapPrev || adminPreviewTapNext){
+      const photos = (state.adminEditDraft && state.adminEditDraft.photos) || [];
+      const changeAdminPreviewPhoto = (dir)=>{
+        const cur = state.adminPreviewIdx || 0;
+        const next = Math.max(0, Math.min(photos.length-1, cur+dir));
+        state.adminPreviewIdx = next;
+        const img = q('#adminPreviewImg');
+        if(img) img.src = photos[next];
+        const bg = q('#adminPreviewBg');
+        if(bg) bg.style.backgroundImage = `url('${photos[next]}')`;
+        const zoomBtn = q('#adminPreviewZoomBtn');
+        if(zoomBtn) zoomBtn.setAttribute('data-zoom-src', photos[next]);
+        qa('.dots-row .dot').forEach((d,i)=>d.classList.toggle('active', i===next));
+      };
+      if(adminPreviewTapPrev) adminPreviewTapPrev.addEventListener('click', ()=>changeAdminPreviewPhoto(-1));
+      if(adminPreviewTapNext) adminPreviewTapNext.addEventListener('click', ()=>changeAdminPreviewPhoto(1));
+    }
+
     const adminSaveProfileBtn = q('#adminSaveProfileBtn');
     if(adminSaveProfileBtn){
       adminSaveProfileBtn.addEventListener('click', async ()=>{
@@ -1567,7 +1742,7 @@
           }
           await Promise.all(writes);
           state.adminEditingId = null;
-          state.adminEditDraft = null;
+          state.adminEditDraft = null; state.adminPreviewIdx = 0;
           state.screen = 'admin';
           render();
         }catch(e){
